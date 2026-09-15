@@ -14,7 +14,7 @@ import com.example.storagemanager.ui.components.PermissionGate
 import com.example.storagemanager.ui.navigation.AppNavHost
 import com.example.storagemanager.ui.theme.StorageManagerTheme
 import dagger.hilt.android.AndroidEntryPoint
-
+// edited by Alpine now i have to exit vim 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
