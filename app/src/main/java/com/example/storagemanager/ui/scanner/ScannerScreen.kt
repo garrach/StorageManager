@@ -1,23 +1,22 @@
 package com.example.storagemanager.ui.scanner
 
-import android.graphics.drawable.Drawable
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.layout.AnimatedPane
+import androidx.compose.material3.adaptive.navigation.ListDetailPaneScaffoldRole
+import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
+import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -25,16 +24,30 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.storagemanager.data.model.FileEntry
-import com.example.storagemanager.ui.components.FileListItem
 import com.example.storagemanager.util.FormatUtils
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3AdaptiveApi::class)
 @Composable
 fun ScannerScreen(
     onBack: (() -> Unit)?,
     viewModel: ScannerViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var pendingDelete by remember { mutableStateOf<FileEntry?>(null) }
+
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { event ->
+            val result = snackbarHostState.showSnackbar(
+                message = event.message,
+                actionLabel = event.actionLabel,
+            )
+            if (event.actionLabel != null && result == SnackbarResult.ActionPerformed) {
+                viewModel.undoLastDeletion()
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -63,12 +76,13 @@ fun ScannerScreen(
                             Icon(Icons.Filled.Delete, contentDescription = "Delete selected")
                         }
                         IconButton(onClick = { viewModel.clearSelection() }) {
-                            Icon(Icons.Filled.Deselect, contentDescription = "Deselect all")
+                            Icon(Icons.Filled.ClearAll, contentDescription = "Deselect all")
                         }
                     }
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
         when {
             uiState.showVolumePicker -> {
@@ -79,42 +93,88 @@ fun ScannerScreen(
                 )
             }
             uiState.isScanning && uiState.scanProgress?.entries.isNullOrEmpty() -> {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        Spacer(Modifier.height(16.dp))
-                        Text(
-                            text = "Scanning...",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = uiState.scanProgress?.currentPath ?: "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(horizontal = 32.dp),
-                        )
-                    }
-                }
-            }
-            else -> {
-                ScanResultContent(
-                    uiState = uiState,
-                    onToggleSelection = { viewModel.toggleSelection(it) },
-                    onToggleFolder = { viewModel.toggleFolder(it) },
-                    onSelectAll = { viewModel.selectAllVisible() },
-                    onBackToPicker = { viewModel.resetToPicker() },
+                ScanningContent(
+                    currentPath = uiState.scanProgress?.currentPath,
                     modifier = Modifier.padding(innerPadding),
                 )
             }
+            else -> {
+                val navigator = rememberListDetailPaneScaffoldNavigator<FileEntry>()
+                val scope = rememberCoroutineScope()
+                NavigableListDetailPaneScaffold(
+                    navigator = navigator,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    listPane = {
+                        AnimatedPane {
+                            ScanResultContent(
+                                uiState = uiState,
+                                onToggleSelection = { viewModel.toggleSelection(it) },
+                                onToggleFolder = { viewModel.toggleFolder(it) },
+                                onSelectAll = { viewModel.selectAllVisible() },
+                                onBackToPicker = { viewModel.resetToPicker() },
+                                onFileClick = { entry ->
+                                    scope.launch {
+                                        navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, entry)
+                                    }
+                                },
+                                onCancelScan = { viewModel.cancelScan() },
+                            )
+                        }
+                    },
+                    detailPane = {
+                        AnimatedPane {
+                            val selected = navigator.currentDestination?.contentKey
+                            if (selected == null) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        "Select a file for details",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            } else {
+                                ScannerDetailPane(
+                                    entry = selected,
+                                    onDelete = { pendingDelete = selected },
+                                    onNavigateBack = { scope.launch { navigator.navigateBack() } },
+                                )
+                            }
+                        }
+                    },
+                )
+            }
         }
+    }
+
+    pendingDelete?.let { toDelete ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Move to Recycle Bin?") },
+            text = {
+                Text(
+                    "\"${toDelete.name}\" (${FormatUtils.formatBytes(toDelete.size)}) will be " +
+                        "moved to the Recycle Bin and can be restored later."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteEntry(toDelete)
+                        pendingDelete = null
+                    },
+                ) {
+                    Text("Move to Recycle Bin")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancel") }
+            },
+        )
     }
 }
 
@@ -179,23 +239,51 @@ private fun VolumePickerContent(
 }
 
 @Composable
+private fun ScanningContent(
+    currentPath: String?,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "Scanning...",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = currentPath ?: "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 32.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun ScanResultContent(
     uiState: ScannerUiState,
     onToggleSelection: (Long) -> Unit,
     onToggleFolder: (String) -> Unit,
     onSelectAll: () -> Unit,
     onBackToPicker: () -> Unit,
+    onFileClick: (FileEntry) -> Unit,
+    onCancelScan: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val entries = uiState.scanProgress?.entries ?: emptyList()
     val hasSelection = uiState.selectedEntries.isNotEmpty()
 
     Column(modifier = modifier.fillMaxSize()) {
-        // Progress bar during scan
         if (uiState.isScanning && uiState.scanProgress != null) {
-            LinearProgressIndicator(
-                modifier = Modifier.fillMaxWidth(),
-            )
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             Text(
                 text = "${FormatUtils.formatCount(uiState.scanProgress.filesScanned)} files • ${FormatUtils.formatBytes(uiState.scanProgress.totalBytes)}",
                 style = MaterialTheme.typography.bodySmall,
@@ -204,7 +292,6 @@ private fun ScanResultContent(
             )
         }
 
-        // Stats bar
         if (entries.isNotEmpty()) {
             Row(
                 modifier = Modifier
@@ -228,7 +315,6 @@ private fun ScanResultContent(
             }
         }
 
-        // File tree
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = 80.dp),
@@ -295,8 +381,12 @@ private fun ScanResultContent(
                     },
                     modifier = Modifier
                         .padding(start = indent)
-                        .clickable(enabled = entry.isDirectory) {
-                            onToggleFolder(entry.path ?: return@clickable)
+                        .clickable {
+                            if (entry.isDirectory) {
+                                onToggleFolder(entry.path ?: return@clickable)
+                            } else {
+                                onFileClick(entry)
+                            }
                         }
                         .background(
                             if (isSelected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
@@ -310,14 +400,13 @@ private fun ScanResultContent(
             }
         }
 
-        // FAB for scan in progress
         if (uiState.isScanning) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.BottomEnd,
             ) {
                 SmallFloatingActionButton(
-                    onClick = { viewModel.cancelScan() },
+                    onClick = onCancelScan,
                     containerColor = MaterialTheme.colorScheme.errorContainer,
                     contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 ) {
@@ -326,4 +415,124 @@ private fun ScanResultContent(
             }
         }
     }
+}
+
+@Composable
+private fun ScannerDetailPane(
+    entry: FileEntry,
+    onDelete: () -> Unit,
+    onNavigateBack: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Surface(
+            modifier = Modifier.size(96.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = scannerFileIcon(entry),
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            text = entry.name,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(24.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+            ),
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                ScannerDetailRow("Size", FormatUtils.formatBytes(entry.size))
+                ScannerDetailRow("Path", entry.name)
+                entry.parentPath?.let { parent ->
+                    ScannerDetailRow("Folder", parent, maxLines = 3)
+                }
+                ScannerDetailRow("Category", entry.category.label)
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+        Row(modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = onNavigateBack,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Back")
+            }
+            Spacer(Modifier.width(12.dp))
+            Button(
+                onClick = onDelete,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                ),
+            ) {
+                Icon(Icons.Filled.Delete, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Trash")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScannerDetailRow(
+    label: String,
+    value: String,
+    maxLines: Int = 2,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.End,
+        )
+    }
+}
+
+private fun scannerFileIcon(entry: FileEntry): ImageVector = when {
+    entry.isDirectory -> Icons.Filled.Folder
+    entry.mimeType?.startsWith("image/") == true -> Icons.Filled.Image
+    entry.mimeType?.startsWith("video/") == true -> Icons.Filled.Videocam
+    entry.mimeType?.startsWith("audio/") == true -> Icons.Filled.MusicNote
+    entry.extension in setOf("zip", "rar", "7z", "tar", "gz", "apk") -> Icons.Filled.Archive
+    entry.extension in setOf("pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "md") ->
+        Icons.Filled.Description
+    else -> Icons.Filled.InsertDriveFile
 }

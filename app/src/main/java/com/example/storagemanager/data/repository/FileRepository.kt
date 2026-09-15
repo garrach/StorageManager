@@ -5,7 +5,9 @@ import android.net.Uri
 import com.example.storagemanager.data.model.FileEntry
 import com.example.storagemanager.data.model.ScanProgress
 import com.example.storagemanager.data.model.StorageCategory
+import com.example.storagemanager.data.model.TrashEntry
 import com.example.storagemanager.util.FileSystemUtils
+import com.example.storagemanager.util.RecycleBin
 import java.io.File
 import java.util.ArrayDeque
 import javax.inject.Inject
@@ -27,6 +29,7 @@ data class DeletionReport(
 class FileRepository @Inject constructor(
     private val contentResolver: ContentResolver,
     private val ioDispatcher: CoroutineDispatcher,
+    private val recycleBin: RecycleBin,
 ) {
 
     fun scanFolder(root: File): Flow<ScanProgress> = flow {
@@ -127,6 +130,41 @@ class FileRepository @Inject constructor(
             }
             DeletionReport(deleted, failed, freed)
         }
+
+    suspend fun trashFiles(entries: List<FileEntry>): DeletionReport =
+        kotlinx.coroutines.withContext(ioDispatcher) {
+            val fileEntries = entries.filter { it.uri.scheme == "file" && it.path != null }
+            val contentEntries = entries.filter { it.uri.scheme == "content" }
+
+            val trashed = recycleBin.trashFiles(fileEntries)
+            var contentDeleted = 0
+            var contentFailed = 0
+            var contentFreed = 0L
+            for (entry in contentEntries) {
+                val ok = deleteSingle(entry)
+                if (ok) {
+                    contentDeleted++
+                    contentFreed += entry.size
+                } else {
+                    contentFailed++
+                }
+            }
+            val freed = fileEntries.filter { it.path?.let { p -> File(p).exists() != true } == true }
+                .sumOf { it.size } + contentFreed
+            DeletionReport(
+                deletedCount = trashed + contentDeleted,
+                failedCount = contentFailed,
+                bytesFreed = freed,
+            )
+        }
+
+    suspend fun getTrashEntries(): List<TrashEntry> = recycleBin.getTrashEntries()
+
+    suspend fun restoreTrashEntry(entry: TrashEntry): Boolean = recycleBin.restore(entry)
+
+    suspend fun permanentlyDeleteTrash(entry: TrashEntry): Boolean = recycleBin.permanentlyDelete(entry)
+
+    suspend fun emptyTrash(): Int = recycleBin.emptyTrash()
 
     private fun deleteSingle(entry: FileEntry): Boolean {
         return try {

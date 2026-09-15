@@ -10,17 +10,13 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import com.example.storagemanager.data.model.CategoryUsage
 import com.example.storagemanager.data.model.FileEntry
+import com.example.storagemanager.data.model.SortOrder
 import com.example.storagemanager.data.model.StorageCategory
 import com.example.storagemanager.data.source.MediaStorePagingSource
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
-
-data class CategoryUsage(
-    val size: Long,
-    val count: Long,
-)
 
 class MediaStoreRepository @Inject constructor(
     private val contentResolver: ContentResolver,
@@ -29,6 +25,8 @@ class MediaStoreRepository @Inject constructor(
 
     fun filesPager(
         category: StorageCategory,
+        sortOrder: SortOrder = SortOrder.DATE_DESC,
+        searchQuery: String? = null,
     ): Flow<PagingData<FileEntry>> = Pager(
         config = PagingConfig(
             pageSize = 40,
@@ -36,7 +34,7 @@ class MediaStoreRepository @Inject constructor(
             enablePlaceholders = false,
         ),
         pagingSourceFactory = {
-            MediaStorePagingSource.forCategory(contentResolver, category)
+            MediaStorePagingSource.forCategory(contentResolver, category, sortOrder, searchQuery)
         },
     ).flow
 
@@ -111,9 +109,7 @@ class MediaStoreRepository @Inject constructor(
                 }
             }
         } catch (_: SecurityException) {
-            // Not permitted; category stays empty.
         } catch (_: Exception) {
-            // Unknown failure; category stays empty.
         } finally {
             cursor?.close()
         }

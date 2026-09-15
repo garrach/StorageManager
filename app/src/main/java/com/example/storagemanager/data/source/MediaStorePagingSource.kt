@@ -8,6 +8,7 @@ import androidx.paging.PagingSource
 import androidx.paging.PagingState
 import com.example.storagemanager.data.mapper.MediaStoreMapper
 import com.example.storagemanager.data.model.FileEntry
+import com.example.storagemanager.data.model.SortOrder
 import com.example.storagemanager.data.model.StorageCategory
 
 class MediaStorePagingSource(
@@ -16,6 +17,8 @@ class MediaStorePagingSource(
     private val category: StorageCategory,
     private val selection: String?,
     private val selectionArgs: Array<String>?,
+    private val sortOrder: SortOrder,
+    private val searchQuery: String?,
 ) : PagingSource<Int, FileEntry>() {
 
     override fun getRefreshKey(state: PagingState<Int, FileEntry>): Int? =
@@ -27,7 +30,20 @@ class MediaStorePagingSource(
     override suspend fun load(params: LoadParams<Int>): LoadResult<Int, FileEntry> {
         val offset = params.key ?: 0
         val limit = params.loadSize
-        val sortOrder = "${MediaStore.MediaColumns.DATE_MODIFIED} DESC LIMIT $limit OFFSET $offset"
+
+        val orderSql = "${sortOrder.sql} LIMIT $limit OFFSET $offset"
+
+        val (finalSelection, finalArgs) = if (!searchQuery.isNullOrBlank()) {
+            val searchSelection = "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ?"
+            val searchArg = "%$searchQuery%"
+            if (selection != null) {
+                "$selection AND $searchSelection" to (selectionArgs.orEmpty() + searchArg)
+            } else {
+                searchSelection to arrayOf(searchArg)
+            }
+        } else {
+            selection to selectionArgs
+        }
 
         val projection = arrayOf(
             MediaStore.MediaColumns._ID,
@@ -43,9 +59,9 @@ class MediaStorePagingSource(
             cursor = contentResolver.query(
                 collectionUri,
                 projection,
-                selection,
-                selectionArgs,
-                sortOrder,
+                finalSelection,
+                finalArgs,
+                orderSql,
             )
             cursor?.use { c ->
                 while (c.moveToNext()) {
@@ -67,54 +83,52 @@ class MediaStorePagingSource(
     }
 
     companion object {
+        private fun baseSelection(category: StorageCategory): Pair<String?, Array<String>?> = when (category) {
+            StorageCategory.IMAGES -> "${MediaStore.MediaColumns.SIZE} > ?" to arrayOf("0")
+            StorageCategory.VIDEOS -> "${MediaStore.MediaColumns.SIZE} > ?" to arrayOf("0")
+            StorageCategory.AUDIO -> "${MediaStore.MediaColumns.SIZE} > ?" to arrayOf("0")
+            StorageCategory.DOWNLOADS -> "${MediaStore.MediaColumns.SIZE} > ?" to arrayOf("0")
+            StorageCategory.DOCUMENTS -> (
+                "${MediaStore.MediaColumns.SIZE} > ? AND " +
+                    "(${MediaStore.MediaColumns.MIME_TYPE} LIKE ? OR " +
+                    "(${MediaStore.MediaColumns.MIME_TYPE} LIKE ? AND " +
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} NOT LIKE ?))"
+                ) to arrayOf("0", "text/%", "application/pdf", "%.pdf")
+            StorageCategory.OTHER -> (
+                "${MediaStore.MediaColumns.SIZE} > ? AND " +
+                    "${MediaStore.MediaColumns.MIME_TYPE} NOT LIKE ? AND " +
+                    "${MediaStore.MediaColumns.MIME_TYPE} NOT LIKE ? AND " +
+                    "${MediaStore.MediaColumns.MIME_TYPE} NOT LIKE ?"
+                ) to arrayOf("0", "image/%", "video/%", "audio/%")
+            StorageCategory.APPS -> "${MediaStore.MediaColumns.SIZE} < 0" to null
+        }
+
+        private fun collectionUri(category: StorageCategory): Uri = when (category) {
+            StorageCategory.IMAGES -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            StorageCategory.VIDEOS -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            StorageCategory.AUDIO -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            StorageCategory.DOWNLOADS -> MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            StorageCategory.DOCUMENTS,
+            StorageCategory.OTHER,
+            StorageCategory.APPS -> MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        }
+
         fun forCategory(
             contentResolver: ContentResolver,
             category: StorageCategory,
+            sortOrder: SortOrder = SortOrder.DATE_DESC,
+            searchQuery: String? = null,
         ): MediaStorePagingSource {
-            val (uri, selection, args) = when (category) {
-                StorageCategory.IMAGES -> Triple(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    "${MediaStore.MediaColumns.SIZE} > ?",
-                    arrayOf("0")
-                )
-                StorageCategory.VIDEOS -> Triple(
-                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
-                    "${MediaStore.MediaColumns.SIZE} > ?",
-                    arrayOf("0")
-                )
-                StorageCategory.AUDIO -> Triple(
-                    MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
-                    "${MediaStore.MediaColumns.SIZE} > ?",
-                    arrayOf("0")
-                )
-                StorageCategory.DOWNLOADS -> Triple(
-                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                    "${MediaStore.MediaColumns.SIZE} > ?",
-                    arrayOf("0")
-                )
-                StorageCategory.DOCUMENTS -> Triple(
-                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
-                    "${MediaStore.MediaColumns.SIZE} > ? AND " +
-                        "(${MediaStore.MediaColumns.MIME_TYPE} LIKE ? OR " +
-                        "(${MediaStore.MediaColumns.MIME_TYPE} LIKE ? AND " +
-                        "${MediaStore.MediaColumns.DISPLAY_NAME} NOT LIKE ?))",
-                    arrayOf("0", "text/%", "application/pdf")
-                )
-                StorageCategory.OTHER -> Triple(
-                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
-                    "${MediaStore.MediaColumns.SIZE} > ? AND " +
-                        "${MediaStore.MediaColumns.MIME_TYPE} NOT LIKE ? AND " +
-                        "${MediaStore.MediaColumns.MIME_TYPE} NOT LIKE ? AND " +
-                        "${MediaStore.MediaColumns.MIME_TYPE} NOT LIKE ?",
-                    arrayOf("0", "image/%", "video/%", "audio/%")
-                )
-                StorageCategory.APPS -> Triple(
-                    MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
-                    "${MediaStore.MediaColumns.SIZE} < 0",
-                    null
-                )
-            }
-            return MediaStorePagingSource(contentResolver, uri, category, selection, args)
+            val (selection, args) = baseSelection(category)
+            return MediaStorePagingSource(
+                contentResolver = contentResolver,
+                collectionUri = collectionUri(category),
+                category = category,
+                selection = selection,
+                selectionArgs = args,
+                sortOrder = sortOrder,
+                searchQuery = searchQuery,
+            )
         }
     }
 }

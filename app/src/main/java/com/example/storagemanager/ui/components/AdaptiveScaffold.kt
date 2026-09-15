@@ -7,17 +7,17 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
+import androidx.compose.material3.windowsizeclass.calculateWindowSizeClass
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
-import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import com.example.storagemanager.ui.navigation.NAV_ITEMS
 import com.example.storagemanager.ui.navigation.Screen
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AdaptiveScaffold(
     navController: NavController,
@@ -29,39 +29,61 @@ fun AdaptiveScaffold(
     val currentRoute = currentDestination?.route
 
     val isTopLevel = currentRoute in NAV_ITEMS.map { it.route }
+    val windowSizeClass = calculateWindowSizeClass()
+    val showRail = windowSizeClass.widthSizeClass != WindowWidthSizeClass.Compact
 
-    Scaffold(
-        modifier = modifier,
-        bottomBar = {
-            AnimatedVisibility(
-                visible = isTopLevel,
-                enter = fadeIn(),
-                exit = fadeOut(),
-            ) {
-                NavigationBar {
-                    NAV_ITEMS.forEach { screen ->
-                        NavigationBarItem(
-                            icon = { Icon(screenIcon(screen), contentDescription = screen.route) },
-                            label = { Text(screenLabel(screen), style = MaterialTheme.typography.labelSmall) },
-                            selected = currentRoute == screen.route,
-                            onClick = {
-                                navController.navigate(screen.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                        )
-                    }
+    if (showRail) {
+        Row(modifier = modifier.fillMaxSize()) {
+            NavigationRail(modifier = Modifier.fillMaxHeight()) {
+                NAV_ITEMS.forEach { screen ->
+                    NavigationRailItem(
+                        selected = currentRoute == screen.route,
+                        onClick = { navController.navigateToTopLevel(screen) },
+                        icon = { Icon(navIcon(screen), contentDescription = screen.route) },
+                        label = { Text(screenLabel(screen)) },
+                    )
                 }
             }
-        },
-    ) { innerPadding ->
-        content(Modifier.padding(innerPadding))
+            Box(modifier = Modifier.weight(1f)) {
+                content(Modifier.fillMaxSize())
+            }
+        }
+    } else {
+        Scaffold(
+            modifier = modifier,
+            bottomBar = {
+                AnimatedVisibility(
+                    visible = isTopLevel,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                ) {
+                    NavigationBar {
+                        NAV_ITEMS.forEach { screen ->
+                            NavigationBarItem(
+                                icon = { Icon(navIcon(screen), contentDescription = screen.route) },
+                                label = { Text(screenLabel(screen), style = MaterialTheme.typography.labelSmall) },
+                                selected = currentRoute == screen.route,
+                                onClick = { navController.navigateToTopLevel(screen) },
+                            )
+                        }
+                    }
+                }
+            },
+        ) { innerPadding ->
+            content(Modifier.padding(innerPadding))
+        }
     }
 }
 
-private fun screenIcon(screen: Screen): ImageVector = when (screen) {
+private fun NavController.navigateToTopLevel(screen: Screen) {
+    navigate(screen.route) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+
+private fun navIcon(screen: Screen): ImageVector = when (screen) {
     Screen.Dashboard -> Icons.Filled.Home
     Screen.Scanner -> Icons.Filled.Search
     Screen.Cleaner -> Icons.Filled.CleaningServices
