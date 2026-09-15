@@ -119,7 +119,6 @@ fun ScannerScreen(
                                         navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, entry)
                                     }
                                 },
-                                onCancelScan = { viewModel.cancelScan() },
                             )
                         }
                     },
@@ -184,16 +183,21 @@ private fun VolumePickerContent(
     onVolumeSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.TopCenter,
     ) {
-        Text(
-            text = "Select a storage volume to scan",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp)
+                .padding(16.dp),
+        ) {
+            Text(
+                text = "Select a storage volume to scan",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
         Spacer(Modifier.height(16.dp))
         volumes.forEach { path ->
             Card(
@@ -236,6 +240,7 @@ private fun VolumePickerContent(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -275,7 +280,6 @@ private fun ScanResultContent(
     onSelectAll: () -> Unit,
     onBackToPicker: () -> Unit,
     onFileClick: (FileEntry) -> Unit,
-    onCancelScan: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val entries = uiState.scanProgress?.entries ?: emptyList()
@@ -397,21 +401,6 @@ private fun ScanResultContent(
                     modifier = Modifier.padding(start = indent),
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                 )
-            }
-        }
-
-        if (uiState.isScanning) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.BottomEnd,
-            ) {
-                SmallFloatingActionButton(
-                    onClick = onCancelScan,
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                ) {
-                    Icon(Icons.Filled.Close, contentDescription = "Stop scan")
-                }
             }
         }
     }

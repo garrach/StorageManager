@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.storage.StorageManager
 import android.os.storage.StorageStatsManager
+import com.example.storagemanager.data.model.CategoryUsage
 import com.example.storagemanager.data.model.StorageOverview
 import com.example.storagemanager.util.StorageUtils
 import kotlinx.coroutines.CoroutineDispatcher

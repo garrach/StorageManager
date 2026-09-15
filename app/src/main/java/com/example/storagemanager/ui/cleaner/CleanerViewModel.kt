@@ -94,7 +94,9 @@ class CleanerViewModel @Inject constructor(
             val entries = suggestion.items
             val report = fileRepository.trashFiles(entries)
             if (report.deletedCount > 0) {
-                lastTrashed = emptyList()
+                val deletedPaths = entries.mapNotNull { it.path }.toSet()
+                lastTrashed = fileRepository.getTrashEntries()
+                    .filter { it.originalPath in deletedPaths }
             }
             _uiState.update {
                 val updatedSuggestions = it.suggestions.map { s ->

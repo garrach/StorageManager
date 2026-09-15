@@ -149,12 +149,13 @@ class FileRepository @Inject constructor(
                     contentFailed++
                 }
             }
-            val freed = fileEntries.filter { it.path?.let { p -> File(p).exists() != true } == true }
-                .sumOf { it.size } + contentFreed
+            val trashedFreed = fileEntries
+                .filter { entry -> entry.path?.let { path -> !File(path).exists() } == true }
+                .sumOf { it.size }
             DeletionReport(
                 deletedCount = trashed + contentDeleted,
                 failedCount = contentFailed,
-                bytesFreed = freed,
+                bytesFreed = trashedFreed + contentFreed,
             )
         }
 
